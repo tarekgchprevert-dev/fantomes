@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ton audit · Fantômes</title>
+<meta name="robots" content="noindex">
+<style>
+:root{--encre:#1b2433;--rouge:#b3261e;--papier:#f3f5f2;--trait:#cfd5cf}
+*{box-sizing:border-box}
+body{margin:0;background:var(--papier);color:var(--encre);font:1.0625rem/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:36rem;margin:0 auto;padding:1.5rem 1.25rem 6rem}
+h1{font-family:Georgia,serif;font-size:2rem;line-height:1.15;margin:0 0 .75rem}
+p{margin:0 0 1rem}
+.btn{display:block;width:100%;min-height:3.25rem;padding:.9rem;background:var(--encre);color:#fff;text-align:center;font:700 1.05rem system-ui;border:0;border-radius:.375rem;cursor:pointer}
+.btn.s{background:#fff;color:var(--encre);border:1px solid var(--encre);min-height:2.75rem;font-size:.95rem}
+input[type=file]{display:none}
+label.btn{cursor:pointer}
+.champs{display:grid;gap:.5rem;margin:1rem 0}
+input[type=text]{width:100%;min-height:2.75rem;padding:.5rem .75rem;border:1px solid var(--trait);border-radius:.25rem;font:inherit}
+.carte{background:#fff;border:1px solid var(--trait);border-radius:.25rem;padding:1rem;margin:0 0 .75rem}
+.ligne{display:flex;justify-content:space-between;gap:1rem;font-variant-numeric:tabular-nums}
+.an{font-family:Georgia,serif;font-size:1.4rem;font-weight:700}
+.rouge{color:var(--rouge)}
+.petit{font-size:.9rem;color:#5b6472}
+.cochez{display:flex;gap:.6rem;align-items:center;margin:.75rem 0;min-height:2.75rem}
+.cochez input{width:1.4rem;height:1.4rem}
+textarea{width:100%;min-height:16rem;margin-top:.75rem;padding:.75rem;border:1px solid var(--trait);border-radius:.25rem;font:.95rem/1.5 system-ui}
+.total{position:fixed;left:0;right:0;bottom:0;background:var(--encre);color:#fff;padding:.9rem 1.25rem;display:flex;justify-content:space-between;align-items:center}
+.total b{font-family:Georgia,serif;font-size:1.5rem}
+.err{color:var(--rouge);font-weight:700}
+</style>
+</head>
+<body>
+<main>
+<h1>Dépose ton relevé, on débusque les fantômes.</h1>
+<p>Ton fichier est analysé sur ton appareil et n'est envoyé nulle part.</p>
+<label class="btn" for="f">Choisir mon relevé (CSV)</label>
+<input id="f" type="file" accept=".csv,.txt,text/csv">
+<p id="msg" class="err" role="alert"></p>
+<div id="res" hidden>
+<div class="champs">
+<input id="nom" type="text" placeholder="Ton nom et prénom (pour les lettres)" autocomplete="name">
+<input id="adr" type="text" placeholder="Ton adresse (pour les lettres)" autocomplete="street-address">
+</div>
+<p class="petit">Classés par coût sur l'année. Coche ceux que tu veux résilier : ils s'ajoutent au total en bas. Vérifie toujours avant de résilier, la détection peut se tromper.</p>
+<div id="liste"></div>
+</div>
+<p id="vide" class="petit" hidden></p>
+</main>
+<div class="total" id="tot" hidden><span>Économisé sur l'année</span><b id="tv">0 €</b></div>
+<script>
+/*LOGIC*/
+function parseCSV(t){var ls=t.split(/\r?\n/).slice(0,10),d=[';','\t',','].map(function(c){return[c,ls.reduce(function(a,l){return a+l.split(c).length-1},0)]}).sort(function(a,b){return b[1]-a[1]})[0][0],rows=[],r=[],f='',q=false;for(var i=0;i<t.length;i++){var c=t[i];if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}else if(c=='"')q=true;else if(c==d){r.push(f);f=''}else if(c=='\n'||c=='\r'){if(c=='\r'&&t[i+1]=='\n')i++;r.push(f);f='';if(r.some(function(x){return x.trim()}))rows.push(r);r=[]}else f+=c}r.push(f);if(r.some(function(x){return x.trim()}))rows.push(r);return rows}
+function pd(s){s=(s||'').trim();var m=s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/);if(m){var y=+m[3];if(y<100)y+=2000;return new Date(y,m[2]-1,m[1])}m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);return m?new Date(+m[1],m[2]-1,+m[3]):null}
+function pn(s){s=(s||'').replace(/[\s\u00a0€]/g,'').replace(/\.(?=\d{3}(\D|$))/g,'').replace(',','.');var n=parseFloat(s);return isNaN(n)?null:n}
+function norm(s){return s.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\b(PRLV|PRELEVEMENT|SEPA|PAIEMENT|CB|CARTE|VIR|VIREMENT|FACTURE|FACT|REF|MANDAT|ECH|DU|PAR)\b/g,' ').replace(/[^A-Z ]/g,' ').split(/\s+/).filter(function(w){return w.length>1}).slice(0,3).join(' ')}
+function med(a){a=a.slice().sort(function(x,y){return x-y});var m=a.length>>1;return a.length%2?a[m]:(a[m-1]+a[m])/2}
+function detect(rows){
+ var h=-1;rows.slice(0,15).some(function(r,i){if(r.some(function(c){return /^\W*date/i.test(c)})){h=i;return true}});
+ var head=h>=0?rows[h].map(function(c){return c.trim()}):[],body=rows.slice(h+1),n=Math.max.apply(null,rows.map(function(r){return r.length}));
+ function col(re){for(var i=0;i<head.length;i++)if(re.test(head[i]))return i;return -1}
+ function best(fn){var b=-1,s=0;for(var i=0;i<n;i++){var k=body.reduce(function(a,r){return a+(fn(r[i])?1:0)},0);if(k>s){s=k;b=i}}return b}
+ var dc=col(/date/i);if(dc<0)dc=best(function(v){return pd(v)});
+ var deb=col(/d[ée]bit/i),mc=col(/montant|amount|somme/i);if(deb<0&&mc<0)mc=best(function(v){return pn(v)!==null&&/\d[,.]\d/.test(v||'')});
+ var lc=-1;for(var i=0;i<head.length;i++)if(i!=dc&&i!=mc&&i!=deb&&/libell|label|description|d[ée]tail|op[ée]ration|nom/i.test(head[i])){lc=i;break}
+ if(lc<0){var bl=-1,bs=0;for(var i=0;i<n;i++){if(i==dc||i==mc||i==deb)continue;var s=body.reduce(function(a,r){return a+(r[i]||'').length},0);if(s>bs){bs=s;bl=i}}lc=bl}
+ if(dc<0||lc<0||(mc<0&&deb<0))throw new Error("Je ne reconnais pas les colonnes de ce fichier (date, libellé, montant). Vérifie qu'il s'agit bien d'un export CSV de relevé.");
+ var g={};
+ body.forEach(function(r){var d=pd(r[dc]);if(!d)return;var v=deb>=0?pn(r[deb]):pn(r[mc]);if(v===null||v===0)return;if(deb<0&&v>0)return;v=Math.abs(v);var k=norm(r[lc]||'');if(k.length<3)return;(g[k]=g[k]||[]).push({d:d,v:v,raw:(r[lc]||'').trim()})});
+ var out=[];
+ Object.keys(g).forEach(function(k){var cl=[];g[k].slice().sort(function(x,y){return x.v-y.v}).forEach(function(x){var c=cl[cl.length-1];if(c&&x.v<=c[0].v*1.1)c.push(x);else cl.push([x])});cl.forEach(function(a){a=a.sort(function(x,y){return x.d-y.d});var m=med(a.map(function(x){return x.v})),e=a;if(e.length<2)return;
+  var gaps=[];for(var i=1;i<e.length;i++)gaps.push((e[i].d-e[i-1].d)/864e5);var gp=med(gaps),f=gp>=24&&gp<=38?[12,'chaque mois']:gp>=80&&gp<=105?[4,'chaque trimestre']:gp>=330&&gp<=400?[1,'chaque année']:null;if(!f)return;if(Math.max.apply(null,gaps.map(function(x){return Math.abs(x-gp)}))>(f[0]==12?6:f[0]==4?12:30)||(f[0]==12&&e.length<3))return;
+  out.push({key:k,label:k.toLowerCase().replace(/(^|\s)\S/g,function(c){return c.toUpperCase()})+(cl.length>1?' ('+m.toFixed(2).replace('.',',')+' €)':''),raw:e[e.length-1].raw,montant:m,rythme:f[1],annuel:m*f[0],n:e.length,on:false})})});
+ return out.sort(function(a,b){return b.annuel-a.annuel})}
+/*END*/
+var items=[],ouvert={};
+function eur(x){return x.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'}
+function lettre(it){if(/APPLE/.test(it.key))return "Apple ne se résilie pas par courrier.\n\nSur iPhone ou iPad : Réglages > ton nom > Abonnements, choisis l'abonnement qui correspond à ce montant, puis Annuler l'abonnement.\nSur Mac : App Store > ton nom en bas à gauche > Réglages du compte > Abonnements.\nSur le web : reportaproblem.apple.com.\n\nApple regroupe tous ses abonnements sous un même libellé bancaire : repère le bon grâce au montant ci-dessus.";var nom=document.getElementById('nom').value||'[TON NOM]',adr=document.getElementById('adr').value||'[TON ADRESSE]';return nom+'\n'+adr+'\n\nLe '+new Date().toLocaleDateString('fr-FR')+'\n\nObjet : résiliation de mon abonnement '+it.label+'\n\nMadame, Monsieur,\n\nPar la présente, je vous informe de ma décision de résilier, à compter de la réception de ce courrier, l\'abonnement dont je suis titulaire auprès de vos services (numéro de client : [N° DE CLIENT]).\n\nMerci de cesser tout prélèvement et de me confirmer par écrit la résiliation ainsi que sa date effective.\n\nJe vous prie d\'agréer, Madame, Monsieur, l\'expression de mes salutations distinguées.\n\n'+nom}
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+function total(){var s=items.reduce(function(a,i){return a+(i.on?i.annuel:0)},0);document.getElementById('tv').textContent=eur(s)}
+function draw(){var L=document.getElementById('liste');L.textContent='';document.getElementById('res').hidden=!items.length;document.getElementById('tot').hidden=!items.length;items.forEach(function(it,i){var c=el('div','carte'),l=el('div','ligne');var t=el('div');t.appendChild(el('strong',null,it.label));t.appendChild(el('div','petit',eur(it.montant)+' '+it.rythme+' · vu '+it.n+' fois'));l.appendChild(t);l.appendChild(el('div','an rouge',eur(it.annuel)+' / an'));c.appendChild(l);
+ var k=el('label','cochez'),cb=document.createElement('input');cb.type='checkbox';cb.checked=it.on;cb.onchange=function(){it.on=cb.checked;total()};k.appendChild(cb);k.appendChild(el('span',null,'Je veux le résilier'));c.appendChild(k);
+ var b=el('button','btn s',ouvert[i]?'Masquer la lettre':'Voir la lettre de résiliation');b.onclick=function(){ouvert[i]=!ouvert[i];draw()};c.appendChild(b);var nb=el('button','btn s','Ce n\'est pas un abonnement');nb.style.marginTop='.5rem';nb.onclick=function(){items.splice(i,1);ouvert={};draw()};c.appendChild(nb);
+ if(ouvert[i]){var ta=document.createElement('textarea');ta.value=lettre(it);c.appendChild(ta);var cp=el('button','btn s','Copier la lettre');cp.style.marginTop='.5rem';cp.onclick=function(){navigator.clipboard.writeText(ta.value);cp.textContent='Copiée'};c.appendChild(cp)}
+ L.appendChild(c)});total()}
+document.getElementById('f').onchange=function(e){var f=e.target.files[0],m=document.getElementById('msg');m.textContent='';if(!f)return;var r=new FileReader();r.onload=function(){var t;try{t=new TextDecoder('utf-8',{fatal:true}).decode(r.result)}catch(x){t=new TextDecoder('windows-1252').decode(r.result)}
+ try{items=detect(parseCSV(t))}catch(x){m.textContent=x.message;return}ouvert={};var v=document.getElementById('vide');
+ document.getElementById('res').hidden=!items.length;document.getElementById('tot').hidden=!items.length;v.hidden=!!items.length;
+ if(items.length)draw();else v.textContent="Aucun prélèvement régulier détecté. Avec 3 mois de relevé, seuls les prélèvements mensuels de même montant ressortent ; essaie avec 12 mois pour voir aussi les abonnements annuels."};r.readAsArrayBuffer(f)};
+['nom','adr'].forEach(function(i){document.getElementById(i).oninput=function(){if(items.length)draw()}});
+</script>
+</body>
+</html>
