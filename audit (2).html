@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ton audit · Fantômes</title>
+<meta name="robots" content="noindex">
+<style>
+:root{--encre:#1b2433;--rouge:#b3261e;--papier:#f3f5f2;--trait:#cfd5cf}
+*{box-sizing:border-box}
+body{margin:0;background:var(--papier);color:var(--encre);font:1.0625rem/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:36rem;margin:0 auto;padding:1.5rem 1.25rem 6rem}
+h1{font-family:Georgia,serif;font-size:2rem;line-height:1.15;margin:0 0 .75rem}
+p{margin:0 0 1rem}
+.btn{display:block;width:100%;min-height:3.25rem;padding:.9rem;background:var(--encre);color:#fff;text-align:center;font:700 1.05rem system-ui;border:0;border-radius:.375rem;cursor:pointer}
+.btn.s{background:#fff;color:var(--encre);border:1px solid var(--encre);min-height:2.75rem;font-size:.95rem}
+input[type=file]{display:none}
+label.btn{cursor:pointer}
+.champs{display:grid;gap:.5rem;margin:1rem 0}
+input[type=text]{width:100%;min-height:2.75rem;padding:.5rem .75rem;border:1px solid var(--trait);border-radius:.25rem;font:inherit}
+.carte{background:#fff;border:1px solid var(--trait);border-radius:.25rem;padding:1rem;margin:0 0 .75rem}
+.ligne{display:flex;justify-content:space-between;gap:1rem;font-variant-numeric:tabular-nums}
+.an{font-family:Georgia,serif;font-size:1.4rem;font-weight:700}
+.rouge{color:var(--rouge)}
+.petit{font-size:.9rem;color:#5b6472}
+.cochez{display:flex;gap:.6rem;align-items:center;margin:.75rem 0;min-height:2.75rem}
+.cochez input{width:1.4rem;height:1.4rem}
+textarea{width:100%;min-height:16rem;margin-top:.75rem;padding:.75rem;border:1px solid var(--trait);border-radius:.25rem;font:.95rem/1.5 system-ui}
+.total{position:fixed;left:0;right:0;bottom:0;background:var(--encre);color:#fff;padding:.9rem 1.25rem;display:flex;justify-content:space-between;align-items:center}
+.total b{font-family:Georgia,serif;font-size:1.5rem}
+.err{color:var(--rouge);font-weight:700}
+</style>
+</head>
+<body>
+<main>
+<h1>Dépose ton relevé, on débusque les fantômes.</h1>
+<p>Ton fichier est analysé sur ton appareil et n'est envoyé nulle part.</p>
+<p class="petit">Tu as des relevés PDF, un par mois ? Choisis-en plusieurs d'un coup (3 mois minimum).</p>
+<label class="btn" for="f">Choisir mon relevé (PDF ou CSV)</label>
+<input id="f" type="file" multiple accept=".pdf,.csv,.txt,application/pdf,text/csv">
+<p id="msg" class="err" role="alert"></p>
+<div id="res" hidden>
+<div class="champs">
+<input id="nom" type="text" placeholder="Ton nom et prénom (pour les lettres)" autocomplete="name">
+<input id="adr" type="text" placeholder="Ton adresse (pour les lettres)" autocomplete="street-address">
+</div>
+<p class="petit">Classés par coût sur l'année. Coche ceux que tu veux résilier : ils s'ajoutent au total en bas. Vérifie toujours avant de résilier, la détection peut se tromper.</p>
+<div id="liste"></div>
+</div>
+<p id="vide" class="petit" hidden></p>
+<div id="dg"></div>
+</main>
+<div class="total" id="tot" hidden><span>Économisé sur l'année</span><b id="tv">0 €</b></div>
+<script>
+/*LOGIC*/
+function parseCSV(t){var ls=t.split(/\r?\n/).slice(0,10),d=[';','\t',','].map(function(c){return[c,ls.reduce(function(a,l){return a+l.split(c).length-1},0)]}).sort(function(a,b){return b[1]-a[1]})[0][0],rows=[],r=[],f='',q=false;for(var i=0;i<t.length;i++){var c=t[i];if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}else if(c=='"')q=true;else if(c==d){r.push(f);f=''}else if(c=='\n'||c=='\r'){if(c=='\r'&&t[i+1]=='\n')i++;r.push(f);f='';if(r.some(function(x){return x.trim()}))rows.push(r);r=[]}else f+=c}r.push(f);if(r.some(function(x){return x.trim()}))rows.push(r);return rows}
+function pd(s){s=(s||'').trim();var m=s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/);if(m){var y=+m[3];if(y<100)y+=2000;return new Date(y,m[2]-1,m[1])}m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);return m?new Date(+m[1],m[2]-1,+m[3]):null}
+function pn(s){s=(s||'').replace(/[\s\u00a0€]/g,'').replace(/\.(?=\d{3}(\D|$))/g,'').replace(',','.');var n=parseFloat(s);return isNaN(n)?null:n}
+function norm(s){return s.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\b(PRLV|PRELEVEMENT|SEPA|PAIEMENT|CB|CARTE|VIR|VIREMENT|FACTURE|FACT|REF|MANDAT|ECH|DU|PAR)\b/g,' ').replace(/[^A-Z ]/g,' ').split(/\s+/).filter(function(w){return w.length>1}).slice(0,3).join(' ')}
+function med(a){a=a.slice().sort(function(x,y){return x-y});var m=a.length>>1;return a.length%2?a[m]:(a[m-1]+a[m])/2}
+function detect(rows){
+ var h=-1;rows.slice(0,15).some(function(r,i){if(r.some(function(c){return /^\W*date/i.test(c)})){h=i;return true}});
+ var head=h>=0?rows[h].map(function(c){return c.trim()}):[],body=rows.slice(h+1),n=Math.max.apply(null,rows.map(function(r){return r.length}));
+ function col(re){for(var i=0;i<head.length;i++)if(re.test(head[i]))return i;return -1}
+ function best(fn){var b=-1,s=0;for(var i=0;i<n;i++){var k=body.reduce(function(a,r){return a+(fn(r[i])?1:0)},0);if(k>s){s=k;b=i}}return b}
+ var dc=col(/date/i);if(dc<0)dc=best(function(v){return pd(v)});
+ var deb=col(/d[ée]bit/i),mc=col(/montant|amount|somme/i);if(deb<0&&mc<0)mc=best(function(v){return pn(v)!==null&&/\d[,.]\d/.test(v||'')});
+ var lc=-1;for(var i=0;i<head.length;i++)if(i!=dc&&i!=mc&&i!=deb&&/libell|label|description|d[ée]tail|op[ée]ration|nom/i.test(head[i])){lc=i;break}
+ if(lc<0){var bl=-1,bs=0;for(var i=0;i<n;i++){if(i==dc||i==mc||i==deb)continue;var s=body.reduce(function(a,r){return a+(r[i]||'').length},0);if(s>bs){bs=s;bl=i}}lc=bl}
+ if(dc<0||lc<0||(mc<0&&deb<0))throw new Error("Je ne reconnais pas les colonnes de ce fichier (date, libellé, montant). Vérifie qu'il s'agit bien d'un export CSV de relevé.");
+ var g={};
+ body.forEach(function(r){var d=pd(r[dc]);if(!d)return;var v=deb>=0?pn(r[deb]):pn(r[mc]);if(v===null||v===0)return;if(deb<0&&v>0)return;v=Math.abs(v);var k=norm(r[lc]||'');if(k.length<3)return;(g[k]=g[k]||[]).push({d:d,v:v,raw:(r[lc]||'').trim()})});
+ var out=[];
+ Object.keys(g).forEach(function(k){var cl=[];g[k].slice().sort(function(x,y){return x.v-y.v}).forEach(function(x){var c=cl[cl.length-1];if(c&&x.v<=c[0].v*1.1)c.push(x);else cl.push([x])});cl.forEach(function(a){a=a.sort(function(x,y){return x.d-y.d});var m=med(a.map(function(x){return x.v})),e=a;if(e.length<2)return;
+  var gaps=[];for(var i=1;i<e.length;i++)gaps.push((e[i].d-e[i-1].d)/864e5);var gp=med(gaps),f=gp>=24&&gp<=38?[12,'chaque mois']:gp>=80&&gp<=105?[4,'chaque trimestre']:gp>=330&&gp<=400?[1,'chaque année']:null;if(!f)return;if(Math.max.apply(null,gaps.map(function(x){return Math.abs(x-gp)}))>(f[0]==12?6:f[0]==4?12:30)||(f[0]==12&&e.length<3))return;
+  out.push({key:k,label:k.toLowerCase().replace(/(^|\s)\S/g,function(c){return c.toUpperCase()})+(cl.length>1?' ('+m.toFixed(2).replace('.',',')+' €)':''),raw:e[e.length-1].raw,montant:m,rythme:f[1],annuel:m*f[0],n:e.length,on:false})})});
+ return out.sort(function(a,b){return b.annuel-a.annuel})}
+function words(T){var o=[];T.forEach(function(t){var q=t.s,w=t.w||0,n=q.length||1,re=/\S+/g,m;while((m=re.exec(q)))o.push({s:m[0],x:t.x+w*m.index/n,w:w*m[0].length/n})});return o.sort(function(a,b){return a.x-b.x})}
+function pdfRows(pages){
+ var L=[];pages.forEach(function(it){it=it.filter(function(t){return t.s.trim()}).sort(function(a,b){return b.y-a.y||a.x-b.x});var c=null;it.forEach(function(t){if(c&&Math.abs(c.y-t.y)<3)c.t.push(t);else{c={y:t.y,t:[t]};L.push(c)}})});
+ var all=L.map(function(l){return l.t.map(function(t){return t.s}).join(' ')}).join('\n'),ym=all.match(/\b(\d{1,2})[\/.](\d{1,2})[\/.](20\d{2})\b/),yr=ym?+ym[3]:new Date().getFullYear(),dm=ym?+ym[2]:12;
+ var cd=null,cc=null,AM=/^[-+\u2212]?\d{1,3}(?:[\u00a0.]\d{3})*,\d{2}$/,DT=/^(\d{1,2})[\/.](\d{1,2})(?:[\/.](\d{2,4}))?$/,sg=/(^|\s)[-\u2212]\d+,\d{2}/.test(all),rows=[["Date","Libellé","Débit","Crédit"]];
+ function mid(t){return t.x+(t.w||0)/2}
+ L.forEach(function(l){var T=words(l.t);if(!T.length)return;
+  var hd=T.filter(function(t){return /^d[ée]bit/i.test(t.s)})[0],hc=T.filter(function(t){return /^cr[ée]dit/i.test(t.s)})[0];
+  if(hd&&hc){cd=mid(hd);cc=mid(hc);return}
+  var m=T[0].s.match(DT);if(!m)return;
+  var i=1;if(T[1]&&DT.test(T[1].s))i=2;
+  var lab=[],am=[];
+  for(;i<T.length;i++){var q=T[i].s,x=mid(T[i]);if(/^\d{1,3}$/.test(q)&&T[i+1]&&/^\d{3},\d{2}$/.test(T[i+1].s)){q=q+'\u00a0'+T[i+1].s;x=(x+mid(T[i+1]))/2;i++}if(AM.test(q))am.push({s:q,x:x});else if(q!='€'&&!/^EUR$/i.test(q)&&!am.length)lab.push(q)}
+  if(!am.length||!lab.length)return;
+  var y=m[3]?(+m[3]<100?2000+ +m[3]:+m[3]):(+m[2]-dm>6?yr-1:yr),db='',cr='';
+  am.forEach(function(a){var neg=/^[-\u2212]/.test(a.s),v=a.s.replace(/^[-+\u2212]/,'');
+   if(cd!==null){var d1=Math.abs(a.x-cd),d2=Math.abs(a.x-cc);if(Math.min(d1,d2)>70)return;if(d1<=d2)db=v;else cr=v}
+   else if(sg){if(neg)db=v;else cr=v}else db=v});
+  rows.push([m[1]+'/'+m[2]+'/'+y,lab.join(' '),db,cr])});
+ return rows}
+function mergeRows(list){var seen={},rows=[["Date","Libellé","Débit","Crédit"]];list.forEach(function(r){var k={};r.slice(1).forEach(function(x){var key=x.join('|');if(seen[key])return;rows.push(x);k[key]=1});Object.keys(k).forEach(function(z){seen[z]=1})});return rows}
+/*END*/
+var items=[],ouvert={};
+function eur(x){return x.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'}
+function lettre(it){if(/APPLE/.test(it.key))return "Apple ne se résilie pas par courrier.\n\nSur iPhone ou iPad : Réglages > ton nom > Abonnements, choisis l'abonnement qui correspond à ce montant, puis Annuler l'abonnement.\nSur Mac : App Store > ton nom en bas à gauche > Réglages du compte > Abonnements.\nSur le web : reportaproblem.apple.com.\n\nApple regroupe tous ses abonnements sous un même libellé bancaire : repère le bon grâce au montant ci-dessus.";var nom=document.getElementById('nom').value||'[TON NOM]',adr=document.getElementById('adr').value||'[TON ADRESSE]';return nom+'\n'+adr+'\n\nLe '+new Date().toLocaleDateString('fr-FR')+'\n\nObjet : résiliation de mon abonnement '+it.label+'\n\nMadame, Monsieur,\n\nPar la présente, je vous informe de ma décision de résilier, à compter de la réception de ce courrier, l\'abonnement dont je suis titulaire auprès de vos services (numéro de client : [N° DE CLIENT]).\n\nMerci de cesser tout prélèvement et de me confirmer par écrit la résiliation ainsi que sa date effective.\n\nJe vous prie d\'agréer, Madame, Monsieur, l\'expression de mes salutations distinguées.\n\n'+nom}
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+function total(){var s=items.reduce(function(a,i){return a+(i.on?i.annuel:0)},0);document.getElementById('tv').textContent=eur(s)}
+function draw(){var L=document.getElementById('liste');L.textContent='';document.getElementById('res').hidden=!items.length;document.getElementById('tot').hidden=!items.length;items.forEach(function(it,i){var c=el('div','carte'),l=el('div','ligne');var t=el('div');t.appendChild(el('strong',null,it.label));t.appendChild(el('div','petit',eur(it.montant)+' '+it.rythme+' · vu '+it.n+' fois'));l.appendChild(t);l.appendChild(el('div','an rouge',eur(it.annuel)+' / an'));c.appendChild(l);
+ var k=el('label','cochez'),cb=document.createElement('input');cb.type='checkbox';cb.checked=it.on;cb.onchange=function(){it.on=cb.checked;total()};k.appendChild(cb);k.appendChild(el('span',null,'Je veux le résilier'));c.appendChild(k);
+ var b=el('button','btn s',ouvert[i]?'Masquer la lettre':'Voir la lettre de résiliation');b.onclick=function(){ouvert[i]=!ouvert[i];draw()};c.appendChild(b);var nb=el('button','btn s','Ce n\'est pas un abonnement');nb.style.marginTop='.5rem';nb.onclick=function(){items.splice(i,1);ouvert={};draw()};c.appendChild(nb);
+ if(ouvert[i]){var ta=document.createElement('textarea');ta.value=lettre(it);c.appendChild(ta);var cp=el('button','btn s','Copier la lettre');cp.style.marginTop='.5rem';cp.onclick=function(){navigator.clipboard.writeText(ta.value);cp.textContent='Copiée'};c.appendChild(cp)}
+ L.appendChild(c)});total()}
+var W='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+function loadPdfjs(){return new Promise(function(ok,ko){if(window.pdfjsLib)return ok();var q=document.createElement('script');q.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';q.onload=function(){pdfjsLib.GlobalWorkerOptions.workerSrc=W;ok()};q.onerror=ko;document.head.appendChild(q)})}
+function readPdf(buf){return loadPdfjs().then(function(){return pdfjsLib.getDocument({data:buf}).promise}).then(function(doc){var ps=[];for(var n=1;n<=doc.numPages;n++)ps.push(doc.getPage(n).then(function(pg){return pg.getTextContent()}).then(function(c){return c.items.map(function(t){return{s:t.str,x:t.transform[4],y:t.transform[5],w:t.width}})}));return Promise.all(ps)}).then(function(pg){if(!window.lastPages)window.lastPages=pg;return pdfRows(pg)})}
+function show(){var v=document.getElementById('vide');ouvert={};document.getElementById('res').hidden=!items.length;document.getElementById('tot').hidden=!items.length;v.hidden=!!items.length;if(!items.length)showDiag();if(items.length)draw();else v.textContent="Aucun prélèvement régulier détecté. Avec 3 mois de relevé, seuls les prélèvements mensuels de même montant ressortent ; essaie avec 12 mois pour voir aussi les abonnements annuels."}
+function mask(q){return /^(date|d[ée]bit|cr[ée]dit|libell|valeur|euros?|op[ée]|solde|montant|ancien|nouveau|total)/i.test(q)?q:q.replace(/\d/g,'9').replace(/[A-ZÀ-Ý]/g,'A').replace(/[a-zà-ÿ]/g,'a')}
+function diag(){var pg=window.lastPages,out=[];if(!pg)return '';pg.slice(0,2).forEach(function(it,pi){var ls=[],c=null;it.filter(function(t){return t.s.trim()}).sort(function(a,b){return b.y-a.y||a.x-b.x}).forEach(function(t){if(c&&Math.abs(c.y-t.y)<3)c.t.push(t);else{c={y:t.y,t:[t]};ls.push(c)}});ls.slice(0,40).forEach(function(l){out.push('p'+(pi+1)+' '+l.t.sort(function(a,b){return a.x-b.x}).map(function(t){return Math.round(t.x/10)*10+'|'+Math.round((t.w||0)/10)*10+':'+mask(t.s.trim())}).join('  '))})});return out.join('\n')}
+function showDiag(){var d=document.getElementById('dg');d.textContent='';if(!window.lastPages)return;d.appendChild(el('p','petit',"Pour m'aider à corriger la lecture, copie ce texte et envoie-le moi. Les chiffres et les lettres sont masqués : seule la mise en page est conservée."));var ta=document.createElement('textarea');ta.value=diag();ta.readOnly=true;d.appendChild(ta);var cp=el('button','btn s','Copier le diagnostic');cp.style.marginTop='.5rem';cp.onclick=function(){navigator.clipboard.writeText(ta.value);cp.textContent='Copié'};d.appendChild(cp)}
+function rd(f){return new Promise(function(ok,ko){var r=new FileReader();r.onload=function(){ok(r.result)};r.onerror=ko;r.readAsArrayBuffer(f)})}
+function isPdf(f){return /\.pdf$/i.test(f.name)||f.type=='application/pdf'}
+document.getElementById('f').onchange=function(e){var fs=[].slice.call(e.target.files),m=document.getElementById('msg');m.textContent='';window.lastPages=null;document.getElementById('dg').textContent='';if(!fs.length)return;var pdfs=fs.filter(isPdf),csv=fs.filter(function(f){return !isPdf(f)}),p;
+ if((csv.length&&pdfs.length)||csv.length>1){m.textContent='Choisis soit un seul fichier CSV, soit un ou plusieurs PDF.';return}
+ if(csv.length)p=rd(csv[0]).then(function(b){var t;try{t=new TextDecoder('utf-8',{fatal:true}).decode(b)}catch(x){t=new TextDecoder('windows-1252').decode(b)}return parseCSV(t)});
+ else p=Promise.all(pdfs.map(rd)).then(function(bs){var out=[];return bs.reduce(function(c,b){return c.then(function(){return readPdf(b)}).then(function(r){out.push(r)})},Promise.resolve()).then(function(){var rows=mergeRows(out);if(rows.length<2)throw new Error("Je n'ai pas réussi à lire ce PDF (document scanné ou format inhabituel). Essaie avec un export CSV, ou dis-moi de quelle banque il vient.");return rows})}).catch(function(x){throw x&&x.message&&/PDF/.test(x.message)?x:new Error("Je n'ai pas pu lire ce PDF. Vérifie ta connexion, ou utilise un export CSV. (Détail technique : "+((x&&x.message)||x)+")")});
+ p.then(function(rows){items=detect(rows);show()}).catch(function(x){m.textContent=x.message;showDiag()})};
+['nom','adr'].forEach(function(i){document.getElementById(i).oninput=function(){if(items.length)draw()}});
+</script>
+</body>
+</html>
